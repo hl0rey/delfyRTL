@@ -45,6 +45,9 @@ typedef enum {
     customBeaconScene,
     beaconInfoScene,
     configAPScene,
+    handshakeCaptureScene,
+    wepCrackScene,
+    eapAttackScene,
     helpScene,
     popupScene,
 
@@ -66,6 +69,9 @@ typedef enum {
     configAPView,
     apNameTextInputView,
     apPasswordTextInputView,
+    handshakeCaptureView,
+    wepCrackView,
+    eapAttackView,
     helpView,
     popupView,
 
@@ -186,8 +192,11 @@ typedef enum {
     ListWifis = 1,
     CustomBeacon = 2,
     CreateAP = 3,
-    Help = 4,
-    Exit = 5,
+    HandshakeCapture = 4,
+    WEPCrack = 5,
+    EAPAttack = 6,
+    Help = 7,
+    Exit = 8,
 } MainMenuIndex;
 
 typedef enum {
@@ -243,6 +252,18 @@ void delfyRTL_menu_callback(void* context, uint32_t index) {
         FURI_LOG_I("delfyRTL", "CreateAP");
         scene_manager_handle_custom_event(app->scene_manager, CreateAP);
         break;
+    case HandshakeCapture:
+        FURI_LOG_I("delfyRTL", "HandshakeCapture");
+        scene_manager_handle_custom_event(app->scene_manager, HandshakeCapture);
+        break;
+    case WEPCrack:
+        FURI_LOG_I("delfyRTL", "WEPCrack");
+        scene_manager_handle_custom_event(app->scene_manager, WEPCrack);
+        break;
+    case EAPAttack:
+        FURI_LOG_I("delfyRTL", "EAPAttack");
+        scene_manager_handle_custom_event(app->scene_manager, EAPAttack);
+        break;
     case Help:
         FURI_LOG_I("delfyRTL", "Help");
         scene_manager_handle_custom_event(app->scene_manager, Help);
@@ -268,6 +289,9 @@ void main_menu_scene_on_enter(void* context) {
     menu_add_item(
         app->menu, "Send Beacon", &I_random_AP, CustomBeacon, delfyRTL_menu_callback, app);
     menu_add_item(app->menu, "Create AP", &I_Custom_AP, CreateAP, delfyRTL_menu_callback, app);
+    menu_add_item(app->menu, "Handshake", &I_Scan_Wifi, HandshakeCapture, delfyRTL_menu_callback, app);
+    menu_add_item(app->menu, "WEP Crack", &I_Scan_Wifi, WEPCrack, delfyRTL_menu_callback, app);
+    menu_add_item(app->menu, "EAP Attack", &I_Scan_Wifi, EAPAttack, delfyRTL_menu_callback, app);
     menu_add_item(app->menu, "Help", &I_help, Help, delfyRTL_menu_callback, app);
     menu_add_item(app->menu, "Exit", &I_exit, Exit, delfyRTL_menu_callback, app);
     menu_set_selected_item(app->menu, app->menuIndex);
@@ -299,6 +323,15 @@ bool main_menu_scene_on_event(void* context, SceneManagerEvent event) {
             //furi_delay_ms(200);
             //uart_helper_send(app->uart_helper, "APSTART ", 8);
             scene_manager_next_scene(app->scene_manager, configAPScene);
+            break;
+        case HandshakeCapture:
+            scene_manager_next_scene(app->scene_manager, handshakeCaptureScene);
+            break;
+        case WEPCrack:
+            scene_manager_next_scene(app->scene_manager, wepCrackScene);
+            break;
+        case EAPAttack:
+            scene_manager_next_scene(app->scene_manager, eapAttackScene);
             break;
         case Help:
             scene_manager_next_scene(app->scene_manager, helpScene);
@@ -889,6 +922,197 @@ void help_scene_on_exit(void* context) {
     UNUSED(context);
 }
 
+// 握手包捕获场景函数声明
+void handshake_capture_scene_on_enter(void* context);
+bool handshake_capture_scene_on_event(void* context, SceneManagerEvent event);
+void handshake_capture_scene_on_exit(void* context);
+void handshake_capture_button_press(GuiButtonType result, InputType type, void* context);
+
+// WEP破解场景函数声明
+void wep_crack_scene_on_enter(void* context);
+bool wep_crack_scene_on_event(void* context, SceneManagerEvent event);
+void wep_crack_scene_on_exit(void* context);
+void wep_crack_button_press(GuiButtonType result, InputType type, void* context);
+
+// EAP攻击场景函数声明
+void eap_attack_scene_on_enter(void* context);
+bool eap_attack_scene_on_event(void* context, SceneManagerEvent event);
+void eap_attack_scene_on_exit(void* context);
+void eap_attack_button_press(GuiButtonType result, InputType type, void* context);
+
+// 握手包捕获场景处理函数
+void handshake_capture_scene_on_enter(void* context) {
+    FURI_LOG_D(TAG, __func__);
+    delfyRTL* app = context;
+    
+    widget_reset(app->widget);
+    widget_add_string_element(app->widget, 64, 10, AlignCenter, AlignTop, FontPrimary, "Handshake Capture");
+    widget_add_string_element(app->widget, 64, 25, AlignCenter, AlignTop, FontSecondary, "Start capturing WPA handshakes");
+    
+    widget_add_button_element(app->widget, GuiButtonTypeCenter, "Start", handshake_capture_button_press, app);
+    widget_add_button_element(app->widget, GuiButtonTypeLeft, "Status", handshake_capture_button_press, app);
+    widget_add_button_element(app->widget, GuiButtonTypeRight, "Export", handshake_capture_button_press, app);
+    widget_add_button_element(app->widget, GuiButtonTypeUp, "PMKID", handshake_capture_button_press, app);
+    
+    view_dispatcher_switch_to_view(app->view_dispatcher, handshakeCaptureView);
+}
+
+bool handshake_capture_scene_on_event(void* context, SceneManagerEvent event) {
+    UNUSED(context);
+    UNUSED(event);
+    return false;
+}
+
+void handshake_capture_scene_on_exit(void* context) {
+    UNUSED(context);
+}
+
+// 握手包捕获按钮处理
+void handshake_capture_button_press(GuiButtonType result, InputType type, void* context) {
+    FURI_LOG_D(TAG, __func__);
+    delfyRTL* app = context;
+    
+    if (type == 0) { // 按下事件
+        switch (result) {
+            case GuiButtonTypeCenter:
+                // 开始/停止握手包捕获
+                uart_helper_send(app->uart_helper, "HANDSHAKE:ON\n", 13);
+                break;
+            case GuiButtonTypeLeft:
+                // 查看状态
+                uart_helper_send(app->uart_helper, "HANDSHAKE:STAT\n", 15);
+                break;
+            case GuiButtonTypeRight:
+                // 导出握手包数据
+                uart_helper_send(app->uart_helper, "HANDSHAKE:EXPORT\n", 17);
+                break;
+            case GuiButtonTypeUp:
+                // 导出PMKID数据
+                uart_helper_send(app->uart_helper, "HANDSHAKE:PMKID\n", 16);
+                break;
+            default:
+                break;
+        }
+    }
+}
+
+// WEP破解场景处理函数
+void wep_crack_scene_on_enter(void* context) {
+    FURI_LOG_D(TAG, __func__);
+    delfyRTL* app = context;
+    
+    widget_reset(app->widget);
+    widget_add_string_element(app->widget, 64, 10, AlignCenter, AlignTop, FontPrimary, "WEP Crack");
+    widget_add_string_element(app->widget, 64, 25, AlignCenter, AlignTop, FontSecondary, "Crack WEP encryption");
+    
+    widget_add_button_element(app->widget, GuiButtonTypeCenter, "Start", wep_crack_button_press, app);
+    widget_add_button_element(app->widget, GuiButtonTypeLeft, "Status", wep_crack_button_press, app);
+    widget_add_button_element(app->widget, GuiButtonTypeRight, "Export", wep_crack_button_press, app);
+    widget_add_button_element(app->widget, GuiButtonTypeUp, "Clear", wep_crack_button_press, app);
+    widget_add_button_element(app->widget, GuiButtonTypeDown, "Algo", wep_crack_button_press, app);
+    
+    view_dispatcher_switch_to_view(app->view_dispatcher, wepCrackView);
+}
+
+bool wep_crack_scene_on_event(void* context, SceneManagerEvent event) {
+    UNUSED(context);
+    UNUSED(event);
+    return false;
+}
+
+void wep_crack_scene_on_exit(void* context) {
+    UNUSED(context);
+}
+
+// WEP破解按钮处理
+void wep_crack_button_press(GuiButtonType result, InputType type, void* context) {
+    FURI_LOG_D(TAG, __func__);
+    delfyRTL* app = context;
+    
+    if (type == 0) { // 按下事件
+        switch (result) {
+            case GuiButtonTypeCenter:
+                // 开始/停止WEP破解
+                uart_helper_send(app->uart_helper, "WEP:ON\n", 7);
+                break;
+            case GuiButtonTypeLeft:
+                // 查看状态
+                uart_helper_send(app->uart_helper, "WEP:STAT\n", 9);
+                break;
+            case GuiButtonTypeRight:
+                // 导出WEP数据
+                uart_helper_send(app->uart_helper, "WEP:EXPORT\n", 11);
+                break;
+            case GuiButtonTypeUp:
+                // 清除WEP数据
+                uart_helper_send(app->uart_helper, "WEP:CLEAR\n", 10);
+                break;
+            case GuiButtonTypeDown:
+                // 切换算法
+                uart_helper_send(app->uart_helper, "WEP:ALGO:5\n", 11);
+                break;
+            default:
+                break;
+        }
+    }
+}
+
+// EAP攻击场景处理函数
+void eap_attack_scene_on_enter(void* context) {
+    FURI_LOG_D(TAG, __func__);
+    delfyRTL* app = context;
+    
+    widget_reset(app->widget);
+    widget_add_string_element(app->widget, 64, 10, AlignCenter, AlignTop, FontPrimary, "EAP Attack");
+    widget_add_string_element(app->widget, 64, 25, AlignCenter, AlignTop, FontSecondary, "Attack EAP authentication");
+    
+    widget_add_button_element(app->widget, GuiButtonTypeCenter, "MD5", eap_attack_button_press, app);
+    widget_add_button_element(app->widget, GuiButtonTypeLeft, "LEAP", eap_attack_button_press, app);
+    widget_add_button_element(app->widget, GuiButtonTypeRight, "GTC", eap_attack_button_press, app);
+    widget_add_button_element(app->widget, GuiButtonTypeUp, "Status", eap_attack_button_press, app);
+    
+    view_dispatcher_switch_to_view(app->view_dispatcher, eapAttackView);
+}
+
+bool eap_attack_scene_on_event(void* context, SceneManagerEvent event) {
+    UNUSED(context);
+    UNUSED(event);
+    return false;
+}
+
+void eap_attack_scene_on_exit(void* context) {
+    UNUSED(context);
+}
+
+// EAP攻击按钮处理
+void eap_attack_button_press(GuiButtonType result, InputType type, void* context) {
+    FURI_LOG_D(TAG, __func__);
+    delfyRTL* app = context;
+    
+    if (type == 0) { // 按下事件
+        switch (result) {
+            case GuiButtonTypeCenter:
+                // 启动EAP-MD5攻击
+                uart_helper_send(app->uart_helper, "EAP:MD5\n", 8);
+                break;
+            case GuiButtonTypeLeft:
+                // 启动EAP-LEAP攻击
+                uart_helper_send(app->uart_helper, "EAP:LEAP\n", 9);
+                break;
+            case GuiButtonTypeRight:
+                // 启动EAP-GTC攻击
+                uart_helper_send(app->uart_helper, "EAP:GTC\n", 8);
+                break;
+            case GuiButtonTypeUp:
+                // 查看状态
+                uart_helper_send(app->uart_helper, "EAP:STAT\n", 9);
+                break;
+            default:
+                break;
+        }
+    }
+}
+
 void popup_scene_on_enter(void* context) {
     delfyRTL* app = context;
     popup_reset(app->popup);
@@ -1121,6 +1345,9 @@ void (*const delfyRTL_scene_on_enter_handlers[])(void*) = {
     custom_beacon_scene_on_enter,
     beacon_info_scene_on_enter,
     config_ap_scene_on_enter,
+    handshake_capture_scene_on_enter,
+    wep_crack_scene_on_enter,
+    eap_attack_scene_on_enter,
     help_scene_on_enter,
     popup_scene_on_enter};
 
@@ -1136,6 +1363,9 @@ bool (*const delfyRTL_scene_on_event_handlers[])(void*, SceneManagerEvent) = {
     custom_beacon_scene_on_event,
     beacon_info_scene_on_event,
     config_ap_scene_on_event,
+    handshake_capture_scene_on_event,
+    wep_crack_scene_on_event,
+    eap_attack_scene_on_event,
     help_scene_on_event,
     popup_scene_on_event};
 
@@ -1151,6 +1381,9 @@ void (*const delfyRTL_scene_on_exit_handlers[])(void*) = {
     custom_beacon_scene_on_exit,
     beacon_info_scene_on_exit,
     config_ap_scene_on_exit,
+    handshake_capture_scene_on_exit,
+    wep_crack_scene_on_exit,
+    eap_attack_scene_on_exit,
     help_scene_on_exit,
     popup_scene_on_exit};
 
@@ -1333,6 +1566,9 @@ static delfyRTL* app_alloc() {
     view_dispatcher_add_view(app->view_dispatcher, wifiInfoView, widget_get_view(app->widget));
     view_dispatcher_add_view(app->view_dispatcher, evilCredsView, widget_get_view(app->widget));
     view_dispatcher_add_view(app->view_dispatcher, beaconInfoView, widget_get_view(app->widget));
+    view_dispatcher_add_view(app->view_dispatcher, handshakeCaptureView, widget_get_view(app->widget));
+    view_dispatcher_add_view(app->view_dispatcher, wepCrackView, widget_get_view(app->widget));
+    view_dispatcher_add_view(app->view_dispatcher, eapAttackView, widget_get_view(app->widget));
     view_dispatcher_add_view(app->view_dispatcher, helpView, widget_get_view(app->widget));
 
     app->variableList = variable_item_list_alloc();
@@ -1380,6 +1616,9 @@ static void app_free(delfyRTL* app) {
     view_dispatcher_remove_view(app->view_dispatcher, beaconListView);
     view_dispatcher_remove_view(app->view_dispatcher, beaconInfoView);
     view_dispatcher_remove_view(app->view_dispatcher, configAPView);
+    view_dispatcher_remove_view(app->view_dispatcher, handshakeCaptureView);
+    view_dispatcher_remove_view(app->view_dispatcher, wepCrackView);
+    view_dispatcher_remove_view(app->view_dispatcher, eapAttackView);
     view_dispatcher_remove_view(app->view_dispatcher, helpView);
     view_dispatcher_remove_view(app->view_dispatcher, popupView);
     view_dispatcher_remove_view(app->view_dispatcher, apNameTextInputView);

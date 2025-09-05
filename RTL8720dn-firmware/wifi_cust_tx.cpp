@@ -1,4 +1,7 @@
 #include "wifi_cust_tx.h"
+#include "wifi_handshake_capture.h"
+#include "wifi_wep_crack.h"
+#include "wifi_eap_attack.h"
 
 /*
  * Transmits a raw 802.11 frame with a given length.
@@ -53,4 +56,99 @@ void wifi_tx_beacon_frame(void* src_mac, void* dst_mac, const char *ssid) {
     frame.ssid_length++;
   }
   wifi_tx_raw_frame(&frame, 38 + frame.ssid_length);
+}
+
+// WiFi帧接收相关实现
+static wifi_rx_callback_t rx_callback = nullptr;
+static wep_packet_callback_t wep_callback = nullptr;
+static eap_packet_callback_t eap_callback = nullptr;
+static bool rx_monitoring = false;
+
+// 初始化WiFi接收
+void wifi_rx_init() {
+    rx_monitoring = false;
+    rx_callback = nullptr;
+    wep_callback = nullptr;
+    eap_callback = nullptr;
+}
+
+// 开始监控模式
+void wifi_rx_start_monitor() {
+    if (rx_monitoring) {
+        return;
+    }
+    
+    // 设置WiFi为监控模式
+    // 注意：这需要调用RTL8720DN的底层API
+    // 具体实现可能需要根据实际的SDK进行调整
+    
+    rx_monitoring = true;
+    DEBUG_SER_PRINT("WiFi monitor mode started\n");
+}
+
+// 停止监控模式
+void wifi_rx_stop_monitor() {
+    if (!rx_monitoring) {
+        return;
+    }
+    
+    rx_monitoring = false;
+    DEBUG_SER_PRINT("WiFi monitor mode stopped\n");
+}
+
+// 检查是否在监控模式
+bool wifi_rx_is_monitoring() {
+    return rx_monitoring;
+}
+
+// 处理接收到的数据包
+void wifi_rx_process_packet(const uint8_t* packet, size_t length) {
+    if (!rx_monitoring || !packet || length < WIFI_FRAME_MIN_LENGTH) {
+        return;
+    }
+
+    // 解析802.11帧
+    WiFiFrameInfo frame_info;
+    if (!parse_wifi_frame(packet, length, &frame_info)) {
+        return;
+    }
+
+    // 提取MAC地址
+    uint8_t src_mac[6], dst_mac[6], bssid[6];
+    extract_mac_addresses(packet, length, src_mac, dst_mac, bssid);
+    
+    // 按优先级处理不同类型的包
+    // 1. 先处理EAPOL包（包含握手包和EAP）
+    if (is_eapol_frame(packet, length)) {
+        if (process_eapol_packet(packet, length, src_mac, dst_mac)) {
+            return; // EAPOL包已处理完成
+        }
+    }
+    
+    // 2. 再处理WEP包
+    if (is_wep_encrypted_frame(packet, length)) {
+        if (process_wep_packet(packet, length, src_mac, dst_mac)) {
+            return; // WEP包已处理完成
+        }
+    }
+    
+    // 3. 最后处理其他包
+    if (rx_callback) {
+        rx_callback(packet, length, src_mac, dst_mac);
+    }
+}
+
+// 设置接收回调函数
+void wifi_rx_set_callback(wifi_rx_callback_t callback) {
+    rx_callback = callback;
+}
+
+// 设置WEP数据包处理回调函数
+void wifi_rx_set_wep_callback(wep_packet_callback_t callback) {
+    wep_callback = callback;
+}
+
+// 设置EAP数据包处理回调函数
+void wifi_rx_set_eap_callback(eap_packet_callback_t callback) {
+    eap_callback = callback;
 }

