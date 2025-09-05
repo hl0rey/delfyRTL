@@ -7,6 +7,12 @@ This project utilizes the **RTL8720DN** WiFi module in combination with the **Fl
 - **Evil Portal** – Create a fake access point with a captive portal.
 - **Beacon Flooding** – Generate multiple fake SSIDs to confuse or disrupt WiFi networks.
 
+- **WEP 破解** – 利用WEP缺陷破解wifi密码
+
+- **握手包、PMKID捕获** – 为离线破解密码获取数据包
+
+- **攻击EAP** – 类似hostapd-wpe
+
 This project is intended **for educational and security research purposes only**. Ensure you have **explicit permission** before using these techniques on any network.
 
 ---
